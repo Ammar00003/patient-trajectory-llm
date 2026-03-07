@@ -39,3 +39,7 @@ venv/
 
 .DS_Store
 Thumbs.db
+
+# IDE files
+.idea/
+.vscode/
