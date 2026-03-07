@@ -27,3 +27,4 @@ EVENTS rules:
 Do NOT infer causes or add interpretation.
 
 Discharge summary:
+[location for discharge summary]
