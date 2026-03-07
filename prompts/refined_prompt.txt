@@ -1,0 +1,29 @@
+Extract structured information from this discharge summary.
+
+Return ONLY these headings exactly as written:
+
+CHIEF_COMPLAINT
+EVENTS
+TRANSITIONAL_ISSUES
+MEDS_ON_ADMISSION
+MEDS_ON_DISCHARGE
+FOLLOW_UP
+
+Rules:
+
+• Use bullet points under each heading
+• Do NOT create new headings
+• If information is missing write UNKNOWN
+
+EVENTS rules:
+• Extract ALL clinical events
+• Format: "<time phrase>: <event>"
+• Copy time phrases exactly if present
+• If no time phrase exists use:
+- on admission
+- during hospital stay
+- at discharge
+
+Do NOT infer causes or add interpretation.
+
+Discharge summary:
