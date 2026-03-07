@@ -1,0 +1,41 @@
+# =====================
+# MIMIC / patient data
+# =====================
+
+*.xlsx
+*.csv
+*.json
+*.txt
+
+raw_notes/
+llm_outputs/
+data/
+mimic/
+notes/
+
+# =====================
+# Python
+# =====================
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# environments
+.env
+venv/
+.venv/
+
+# =====================
+# Jupyter
+# =====================
+
+.ipynb_checkpoints
+
+# =====================
+# OS files
+# =====================
+
+.DS_Store
+Thumbs.db
