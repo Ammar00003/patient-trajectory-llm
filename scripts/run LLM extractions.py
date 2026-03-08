@@ -5,6 +5,7 @@ import subprocess
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 COHORT_PATH = PROJECT_ROOT / "data" / "selected_cohort.csv"
+SECTIONED_DIR = PROJECT_ROOT / "data" / "sectioned_notes"
 OUTPUT_DIR = PROJECT_ROOT / "llm_outputs"
 
 MEDS_PROMPT_PATH = PROJECT_ROOT / "prompts" / "meds_prompt.txt"
@@ -70,9 +71,12 @@ def main():
         hadm_id = str(row["hadm_id"])
         note_id = str(row["note_id"])
         group = str(row["group"])
-        note_text = str(row["text"])
 
         base_name = f"{group}_subject_{subject_id}_hadm_{hadm_id}_note_{note_id}"
+
+        meds_input_file = SECTIONED_DIR / f"{base_name}_meds_input.txt"
+        timeline_input_file = SECTIONED_DIR / f"{base_name}_timeline_input.txt"
+
         meds_file = OUTPUT_DIR / f"{base_name}_meds.txt"
         timeline_file = OUTPUT_DIR / f"{base_name}_timeline.txt"
         error_file = OUTPUT_DIR / f"{base_name}_ERROR.txt"
@@ -80,28 +84,35 @@ def main():
         both_exist = meds_file.exists() and timeline_file.exists()
         if both_exist and not OVERWRITE_EXISTING:
             skipped += 1
-            print(f"[SKIP {i+1}/{total}] {base_name}")
+            print(f"[SKIP {i + 1}/{total}] {base_name}")
             continue
 
+        if not meds_input_file.exists() or not timeline_input_file.exists():
+            failed += 1
+            save_output(error_file, "Missing sectioned input file(s)")
+            print(f"[FAIL {i + 1}/{total}] {base_name} -> Missing sectioned input file(s)")
+            continue
+
+        meds_input_text = meds_input_file.read_text(encoding="utf-8")
+        timeline_input_text = timeline_input_file.read_text(encoding="utf-8")
+
         try:
-            # Prompt A: medications
-            meds_prompt = build_prompt(meds_prompt_template, note_text)
+            meds_prompt = build_prompt(meds_prompt_template, meds_input_text)
             meds_output = run_ollama(meds_prompt)
             save_output(meds_file, meds_output)
             meds_done += 1
 
-            # Prompt B: timeline
-            timeline_prompt = build_prompt(timeline_prompt_template, note_text)
+            timeline_prompt = build_prompt(timeline_prompt_template, timeline_input_text)
             timeline_output = run_ollama(timeline_prompt)
             save_output(timeline_file, timeline_output)
             timeline_done += 1
 
-            print(f"[DONE {i+1}/{total}] {base_name}")
+            print(f"[DONE {i + 1}/{total}] {base_name}")
 
         except Exception as e:
             failed += 1
             save_output(error_file, str(e))
-            print(f"[FAIL {i+1}/{total}] {base_name} -> {e}")
+            print(f"[FAIL {i + 1}/{total}] {base_name} -> {e}")
 
     print("\nExtraction complete.")
     print(f"Medication outputs saved: {meds_done}")
