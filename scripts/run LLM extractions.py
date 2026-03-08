@@ -50,7 +50,7 @@ def save_output(path: Path, content: str) -> None:
 def main():
     print("Loading cohort...")
     df = pd.read_csv(COHORT_PATH)
-    df = df.head(3)
+    #df = df.head(3)
     print("Rows being processed:", len(df))
     meds_prompt_template = load_prompt(MEDS_PROMPT_PATH)
     timeline_prompt_template = load_prompt(TIMELINE_PROMPT_PATH)

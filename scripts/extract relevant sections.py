@@ -186,7 +186,7 @@ def main():
     no_sections = 0
 
     # Optional test mode
-    df = df.head(3)
+    #df = df.head(3)
 
     for i, row in df.iterrows():
         subject_id = str(row["subject_id"])
