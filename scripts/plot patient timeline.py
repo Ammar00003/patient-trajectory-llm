@@ -88,7 +88,7 @@ def main():
         adm_df = patient_df[patient_df["admission_index"] == admission_idx].copy()
 
         # Admission line
-        ax.hlines(y=current_y, xmin=0, xmax=10, linewidth=2)
+        ax.hlines(y=current_y, xmin=0, xmax=10, linewidth=1, color="black", alpha=0.5)
         ax.text(
             -0.25, current_y,
             f"Admission {admission_idx}",

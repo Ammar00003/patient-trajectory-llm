@@ -136,7 +136,15 @@ class TrajectoryApp:
             self.root.update_idletasks()
 
             fig = build_patient_timeline_figure(patient_df, subject_id)
-            fig.show()
+            # Remove all modebar buttons except download as image
+            fig.show(config={
+                'modeBarButtonsToRemove': [
+                    'zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d', 
+                    'autoScale2d', 'resetScale2d', 'hoverClosestCartesian', 'hoverCompareCartesian',
+                    'toggleSpikelines'
+                ],
+                'displaylogo': False
+            })
             
             self.status_var.set(f"Displayed timeline for {subject_id}")
 
