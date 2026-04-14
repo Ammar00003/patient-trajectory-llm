@@ -147,6 +147,7 @@ def build_meds_text(sections: dict) -> str:
     blocks = []
     for key in ordered_keys:
         if key in sections and sections[key].strip():
+            # Include the text "MEDICATION_RELATED_EVENTS" as requested
             blocks.append(f"{key.upper()}:\n{sections[key].strip()}")
 
     return "\n\n".join(blocks).strip()

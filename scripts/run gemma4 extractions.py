@@ -6,12 +6,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 COHORT_PATH = PROJECT_ROOT / "data" / "selected_cohort.csv"
 SECTIONED_DIR = PROJECT_ROOT / "data" / "sectioned_notes"
-OUTPUT_DIR = PROJECT_ROOT / "llm_outputs"
+# New output directory for gemma4
+OUTPUT_DIR = PROJECT_ROOT / "llm_outputs_gemma4"
 
 MEDS_PROMPT_PATH = PROJECT_ROOT / "prompts" / "meds_prompt.txt"
 TIMELINE_PROMPT_PATH = PROJECT_ROOT / "prompts" / "timeline_prompt.txt"
 
-MODEL_NAME = "mistral:7b"   # change if your Ollama model name differs
+# Target model requested by user
+MODEL_NAME = "gemma4:e2b-it-q4_K_M"
 
 # Set to True only for small test reruns
 OVERWRITE_EXISTING = False
@@ -50,6 +52,16 @@ def save_output(path: Path, content: str) -> None:
 def main():
     print("Loading cohort...")
     df = pd.read_csv(COHORT_PATH)
+    
+    # Check if we should filter for evaluation set like in gemma2 script
+    # For now, processing full cohort as per mistral script, but filtering is available
+    evaluation_notes_dir = PROJECT_ROOT / "data" / "evaluation_notes"
+    if evaluation_notes_dir.exists():
+        eval_note_ids = [f.stem for f in evaluation_notes_dir.glob("*.txt")]
+        if eval_note_ids:
+            # Optionally filter: df = df[df["note_id"].isin(eval_note_ids)]
+            pass
+
     print("Rows being processed:", len(df))
     meds_prompt_template = load_prompt(MEDS_PROMPT_PATH)
     timeline_prompt_template = load_prompt(TIMELINE_PROMPT_PATH)

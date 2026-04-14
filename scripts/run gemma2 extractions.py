@@ -6,12 +6,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 COHORT_PATH = PROJECT_ROOT / "data" / "selected_cohort.csv"
 SECTIONED_DIR = PROJECT_ROOT / "data" / "sectioned_notes"
-OUTPUT_DIR = PROJECT_ROOT / "llm_outputs"
+OUTPUT_DIR = PROJECT_ROOT / "llm_outputs_gemma2"
 
 MEDS_PROMPT_PATH = PROJECT_ROOT / "prompts" / "meds_prompt.txt"
 TIMELINE_PROMPT_PATH = PROJECT_ROOT / "prompts" / "timeline_prompt.txt"
 
-MODEL_NAME = "mistral:7b"   # change if your Ollama model name differs
+MODEL_NAME = "gemma2:9b"
 
 # Set to True only for small test reruns
 OVERWRITE_EXISTING = False
@@ -50,7 +50,14 @@ def save_output(path: Path, content: str) -> None:
 def main():
     print("Loading cohort...")
     df = pd.read_csv(COHORT_PATH)
-    print("Rows being processed:", len(df))
+    
+    # Filter for evaluation set
+    evaluation_notes_dir = PROJECT_ROOT / "data" / "evaluation_notes"
+    eval_note_ids = [f.stem for f in evaluation_notes_dir.glob("*.txt")]
+    
+    df = df[df["note_id"].isin(eval_note_ids)]
+    
+    print("Rows being processed (evaluation set only):", len(df))
     meds_prompt_template = load_prompt(MEDS_PROMPT_PATH)
     timeline_prompt_template = load_prompt(TIMELINE_PROMPT_PATH)
 
@@ -82,11 +89,13 @@ def main():
         both_exist = meds_file.exists() and timeline_file.exists()
         if both_exist and not OVERWRITE_EXISTING:
             skipped += 1
+            # print(f"[SKIP {i + 1}/{total}] {base_name}")
             continue
 
         if not meds_input_file.exists() or not timeline_input_file.exists():
             failed += 1
             save_output(error_file, "Missing sectioned input file(s)")
+            # print(f"[FAIL {i + 1}/{total}] {base_name} -> Missing sectioned input file(s)")
             continue
 
         meds_input_text = meds_input_file.read_text(encoding="utf-8")
@@ -103,9 +112,12 @@ def main():
             save_output(timeline_file, timeline_output)
             timeline_done += 1
 
+            # print(f"[DONE {i + 1}/{total}] {base_name}")
+
         except Exception as e:
             failed += 1
             save_output(error_file, str(e))
+            # print(f"[FAIL {i + 1}/{total}] {base_name} -> {e}")
 
     print("\nExtraction complete.")
     print(f"Medication outputs saved: {meds_done}")

@@ -2,6 +2,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from utils.cleaning_utils import clean_gemma_output
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LLM_OUTPUTS_DIR = PROJECT_ROOT / "llm_outputs"
@@ -18,22 +19,24 @@ def get_full_discharge_summary(subject_id: str, hadm_id: str) -> str:
         return f"Error loading full DS: {e}"
     return "Full discharge summary not found."
 
-def get_llm_summary(group: str, subject_id: str, hadm_id: str, note_id: str) -> str:
+def get_llm_summary(group: str, subject_id: str, hadm_id: str, note_id: str, llm_outputs_dir: Path = LLM_OUTPUTS_DIR) -> str:
     """Fetch the LLM summarized discharge summary."""
     # The summary is split between meds and timeline files, but let's try to find a general one or combine
     summary = ""
     base_name = f"{group}_subject_{subject_id}_hadm_{hadm_id}_note_{note_id}"
 
     # Try timeline summary first
-    timeline_file = LLM_OUTPUTS_DIR / f"{base_name}_timeline.txt"
+    timeline_file = llm_outputs_dir / f"{base_name}_timeline.txt"
     if timeline_file.exists():
-        summary += "<b>Timeline Events:</b><br>" + timeline_file.read_text(encoding="utf-8").replace("\n", "<br>")
+        text = clean_gemma_output(timeline_file.read_text(encoding="utf-8"))
+        summary += "<b>Timeline Events:</b><br>" + text.replace("\n", "<br>")
 
     # Try meds summary
-    meds_file = LLM_OUTPUTS_DIR / f"{base_name}_meds.txt"
+    meds_file = llm_outputs_dir / f"{base_name}_meds.txt"
     if meds_file.exists():
         if summary: summary += "<br><br>"
-        summary += "<b>Medication Changes:</b><br>" + meds_file.read_text(encoding="utf-8").replace("\n", "<br>")
+        text = clean_gemma_output(meds_file.read_text(encoding="utf-8"))
+        summary += "<b>Medication Changes:</b><br>" + text.replace("\n", "<br>")
 
     return summary if summary else "LLM summary not found."
 
@@ -75,10 +78,10 @@ def build_patient_timeline_figure(patient_df: pd.DataFrame, subject_id: str) -> 
         fig = make_subplots(
             rows=2, cols=2,
             row_heights=[0.7, 0.3],
-            column_widths=[0.7, 0.3],
+            column_widths=[0.6, 0.4], # Increased width for the text area
             specs=[[{"colspan": 2}, None],
                    [{"type": "bar"}, {"type": "scatter"}]],
-            subplot_titles=("Patient Trajectory Timeline", "Days Between Admissions", "Admission Frequency"),
+            subplot_titles=("Patient Trajectory Timeline", "Days Between Admissions", "Medications: Admission vs Discharge"),
             vertical_spacing=0.15,
             horizontal_spacing=0.1
         )
@@ -98,8 +101,16 @@ def build_patient_timeline_figure(patient_df: pd.DataFrame, subject_id: str) -> 
         tick_texts.append(f"<b>Admission {adm}</b><br>{st_formatted}")
 
     # Add admission background lines
-    for admission_idx in admissions:
+    for i, admission_idx in enumerate(admissions):
         y = y_positions[admission_idx]
+
+        # Alternating background shading for admissions
+        if i % 2 == 1:
+            fig.add_hrect(
+                y0=y - 0.45, y1=y + 0.45,
+                fillcolor="#f8f9fa", opacity=1.0, layer="below", line_width=0,
+                row=main_row, col=main_col
+            )
 
         # Draw a faint background line for each admission
         fig.add_trace(
@@ -107,7 +118,7 @@ def build_patient_timeline_figure(patient_df: pd.DataFrame, subject_id: str) -> 
                 x=[-0.5, 10.5],
                 y=[y, y],
                 mode="lines",
-                line=dict(color="rgba(200, 200, 200, 0.5)", width=3),
+                line=dict(color="rgba(200, 200, 200, 0.3)", width=2),
                 hoverinfo="skip",
                 showlegend=False
             ),
@@ -131,12 +142,15 @@ def build_patient_timeline_figure(patient_df: pd.DataFrame, subject_id: str) -> 
 
             hover_texts = []
             for _, row in type_df.iterrows():
+                # Remove HTML for cleaner plain text display in annotation if we use it
+                clean_content = str(row['content']).replace('<br>', ' ').replace('<b>', '').replace('</b>', '')
+                time_phrase_line = f"<b>Time:</b> {row['time_phrase']}<br>" if str(row['time_phrase']).strip() else ""
                 hover_texts.append(
                     f"<b>Admission {row['admission_index']}</b><br>"
                     f"<b>Date:</b> {row['storetime'].strftime('%Y-%m-%d')}<br>"
                     f"<b>Type:</b> {row['record_type'].replace('_', ' ').title()}<br>"
-                    f"<b>Time:</b> {row['time_phrase']}<br>"
-                    f"<b>Event:</b> {row['content']}<br>"
+                    + time_phrase_line +
+                    f"<b>Event:</b> {clean_content}<br>"
                     f"<extra></extra>"
                 )
 
@@ -147,10 +161,10 @@ def build_patient_timeline_figure(patient_df: pd.DataFrame, subject_id: str) -> 
                     mode="markers+text",
                     name=r_type.replace('_', ' ').title(),
                     marker=dict(
-                        size=14,
+                        size=15,
                         symbol=marker_symbol(r_type),
                         color=get_color(r_type),
-                        line=dict(width=1, color="white")
+                        line=dict(width=1.5, color="white")
                     ),
                     text=[str(row.event_order) for row in type_df.itertuples()],
                     textposition="top center",
@@ -158,7 +172,9 @@ def build_patient_timeline_figure(patient_df: pd.DataFrame, subject_id: str) -> 
                     hovertemplate="%{customdata}",
                     customdata=hover_texts,
                     legendgroup=r_type,
-                    showlegend=(admission_idx == admissions[0])  # Show legend only once per type
+                    showlegend=(admission_idx == admissions[0]),  # Show legend only once per type
+                    # Add unique IDs to markers to potentially help with selection
+                    ids=[f"marker_{admission_idx}_{row.event_order}" for row in type_df.itertuples()]
                 ),
                 row=main_row, col=main_col
             )
@@ -177,36 +193,77 @@ def build_patient_timeline_figure(patient_df: pd.DataFrame, subject_id: str) -> 
             ),
             row=2, col=1
         )
-
-        # --- Analytics: Admission Frequency over time ---
+        fig.add_hline(
+            y=30, row=2, col=1,
+            line=dict(color="#FFA500", width=1.5, dash="dash"),
+            annotation_text="30d", annotation_position="top right",
+            annotation_font=dict(color="#FFA500", size=10)
+        )
+        # Dummy trace so the threshold appears in the legend
         fig.add_trace(
             go.Scatter(
-                x=adm_dates["storetime"],
-                y=adm_dates["admission_index"],
-                mode="lines+markers",
-                line=dict(color="#FF6B6B", width=2),
-                marker=dict(size=8),
-                name="Adm Index",
-                showlegend=False,
-                hovertemplate="Date: %{x|%Y-%m-%d}<br>Admission #%{y}<extra></extra>"
+                x=[None], y=[None],
+                mode="lines",
+                name="30-day threshold",
+                line=dict(color="#FFA500", width=1.5, dash="dash"),
+                showlegend=True
             ),
-            row=2, col=2
+            row=2, col=1
         )
+
+        # --- Medication count line chart ---
+        if "adm_med_count" in patient_df.columns and "dis_med_count" in patient_df.columns:
+            counts_per_adm = (
+                patient_df[["admission_index", "adm_med_count", "dis_med_count"]]
+                .drop_duplicates(subset=["admission_index"])
+                .sort_values("admission_index")
+                .dropna(subset=["adm_med_count", "dis_med_count"])
+            )
+            if not counts_per_adm.empty:
+                x_labels = [f"Adm {a}" for a in counts_per_adm["admission_index"]]
+                fig.add_trace(
+                    go.Scatter(
+                        x=x_labels,
+                        y=counts_per_adm["adm_med_count"],
+                        mode="lines+markers",
+                        name="On Admission",
+                        line=dict(color="#4D96FF", width=2),
+                        marker=dict(size=7),
+                        legendgroup="med_counts",
+                        showlegend=True,
+                        hovertemplate="%{x}<br>Meds on admission: %{y}<extra></extra>"
+                    ),
+                    row=2, col=2
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=x_labels,
+                        y=counts_per_adm["dis_med_count"],
+                        mode="lines+markers",
+                        name="On Discharge",
+                        line=dict(color="#FF6B6B", width=2),
+                        marker=dict(size=7),
+                        legendgroup="med_counts",
+                        showlegend=True,
+                        hovertemplate="%{x}<br>Meds on discharge: %{y}<extra></extra>"
+                    ),
+                    row=2, col=2
+                )
+
 
     # --- Interaction: Admission Buttons / Details ---
     # We will use multiple updatemenus, one per admission, positioned next to the labels.
 
     # Calculate y-domain of the main timeline
     # In subplots, row 1 takes [0.3, 1.0] roughly. For single plot, it's [0, 1].
-    timeline_y_min, timeline_y_max = (0.2, 1.0) if len(admissions) > 1 else (0.1, 0.95)
-
+    # These are now handled within the loop for better precision
     updatemenus = []
 
     # Static annotations (footer)
     base_annotations = [
         dict(
             x=0.5,
-            y=-0.2,  # 👈 move OUTSIDE paper
+            y=-0.2,
             xref="paper",
             yref="paper",
             showarrow=False,
@@ -215,7 +272,7 @@ def build_patient_timeline_figure(patient_df: pd.DataFrame, subject_id: str) -> 
         ),
         dict(
             x=0.5,
-            y=-0.24,
+            y=-0.28,
             xref="paper",
             yref="paper",
             showarrow=False,
@@ -224,62 +281,48 @@ def build_patient_timeline_figure(patient_df: pd.DataFrame, subject_id: str) -> 
         )
     ]
 
-    # Global "Clear View" button
-    updatemenus.append(dict(
-        type="buttons",
-        direction="right",
-        x=0.01,
-        y=1.05,
-        showactive=True,
-        buttons=[dict(
-            label="Clear View",
-            method="relayout",
-            args=[{"annotations": base_annotations}]
-        )],
-        bgcolor="white",
-        font=dict(size=11)
-    ))
-
     # Calculate button positions based on admission count
     for admission_idx in admissions:
         row_data = patient_df[patient_df["admission_index"] == admission_idx].iloc[0]
-        full_ds = get_full_discharge_summary(subject_id, row_data["hadm_id"])
-        llm_sum = get_llm_summary(row_data["group"], subject_id, row_data["hadm_id"], row_data["note_id"])
-
-        # Format the summaries
-        sum_text = (
-            f"<b>ADMISSION {admission_idx} SUMMARY</b><br><br>"
-            f"{llm_sum}"
-        ).replace("\n", "<br>")
-
-        # Within each admission button set, we will show the full DS without hard truncation if possible
-        # or at least a much larger part. Plotly doesn't support scrolling in annotations.
-        # However, we can use a very tall annotation if the figure height is also large.
-
-        # Wrap the full DS text to ensure it stays within the box
-        import textwrap
-        full_ds_wrapped = "<br>".join(["<br>".join(textwrap.wrap(line, width=80)) for line in full_ds.split("\n")])
-
-        ds_text = (
-            f"<b>ADMISSION {admission_idx} FULL DS</b><br><br>"
-            f"{full_ds_wrapped}"
-        ).replace("\n", "<br>")
-
         y_pos = y_positions[admission_idx]
 
-        # Convert data y-position to paper coordinate roughly
-        # Total data range is [0.5, len(admissions) + 0.8]
-        # In timeline, we map y_pos to timeline_y_min -> timeline_y_max
-        y_range_total = (len(admissions) + 0.8) - 0.5
-        norm_y = (y_pos - 0.5) / y_range_total
-        paper_y = timeline_y_min + norm_y * (timeline_y_max - timeline_y_min)
+        # Use normalized data position within the explicit axis range
+        y_range_min = 0.4
+        y_range_max = len(admissions) + 0.6
+        
+        # Normalized position within the axis range (0 to 1)
+        norm_y = (y_pos - y_range_min) / (y_range_max - y_range_min)
+        
+        # Map directly to the paper domain [0.2, 1.0] for subplots or [0.1, 0.95] for single
+        # This domain matches where the subplot's y-axis 1 is actually rendered in Plotly's default make_subplots layout
+        if len(admissions) > 1:
+            # Main timeline in subplots is in top 70% of plot area (row_heights=[0.7, 0.3])
+            # Vertical spacing is 0.15. 
+            # Subplot row 1 domain is approx [0.35, 1.0]
+            paper_y = 0.37 + norm_y * (1.0 - 0.37)
+            # Domain for subplot (1, 1) is [0, 1] in x for single, but in subplots it's [0, 1] across both cols 
+            # with horizontal_spacing=0.1.
+            paper_x_min = 0.0
+            paper_x_max = 1.0
+        else:
+            paper_y = 0.12 + norm_y * (0.93 - 0.12)
+            paper_x_min = 0.0
+            paper_x_max = 1.0
 
-        # Create buttons for this admission
+        adm_df = patient_df[patient_df["admission_index"] == admission_idx].copy()
+        n_events = len(adm_df)
+        if n_events == 1:
+            xs = [5]
+        else:
+            xs = [1 + (8 * i / (n_events - 1)) for i in range(n_events)]
+
+        # Create Summary/Note buttons for this admission
         updatemenus.append(dict(
             type="buttons",
             direction="right",
             active=-1,
-            x=1.01, # Position it just to the right of the timeline
+            showactive=False, # Prevent buttons from "phasing" or changing state on click
+            x=1.03, # Increased padding from timeline to move buttons further right
             y=paper_y,
             xanchor="left",
             yanchor="middle",
@@ -287,53 +330,98 @@ def build_patient_timeline_figure(patient_df: pd.DataFrame, subject_id: str) -> 
                 dict(
                     label="Summary",
                     method="relayout",
-                    args=[{"annotations": base_annotations + [
-                        dict(
-                            text=sum_text, align='left', showarrow=False,
-                            xref='paper', yref='paper', x=1.1, y=0.5,
-                            xanchor='left', yanchor='middle',
-                            bgcolor="rgba(255,255,255,0.95)", bordercolor="#4D96FF",
-                            borderwidth=2, width=450, font=dict(size=10)
-                        )
-                    ]}]
+                    args=[{
+                        "images[0].source": f"http://localhost:5050/open_summary?subject_id={subject_id}&hadm_id={row_data['hadm_id']}&adm_idx={admission_idx}&group={row_data['group']}&note_id={row_data['note_id']}"
+                    }]
                 ),
                 dict(
-                    label="Full DS",
+                    label="Full Note",
                     method="relayout",
-                    args=[{"annotations": base_annotations + [
-                        dict(
-                            text=ds_text, align='left', showarrow=False,
-                            xref='paper', yref='paper', x=1.1, y=0.5,
-                            xanchor='left', yanchor='middle',
-                            bgcolor="rgba(255,255,255,0.95)", bordercolor="#888",
-                            borderwidth=2, width=450, font=dict(size=10)
-                        )
-                    ]}]
+                    args=[{
+                        "images[0].source": f"http://localhost:5050/open_ds?subject_id={subject_id}&hadm_id={row_data['hadm_id']}&adm_idx={admission_idx}"
+                    }]
                 )
             ],
-            bgcolor="white",
-            font=dict(size=9)
+            bgcolor="#ffffff",
+            bordercolor="#dee2e6",
+            borderwidth=1,
+            font=dict(size=10, color="#495057", family="Segoe UI")
         ))
+
+    import copy
+
+    # Build a clean copy of updatemenus (buttons have only their image-source arg, no nested pin state)
+    # This is embedded in each button's args[0] so Plotly keeps buttons in position on relayout.
+    # NOTE: Plotly.relayout only uses args[0] — args[1] is silently ignored for this method.
+    clean_updatemenus = []
+    for menu in updatemenus:
+        clean_menu = copy.deepcopy(menu)
+        for btn in clean_menu.get("buttons", []):
+            if "args" in btn:
+                btn["args"] = [copy.deepcopy(btn["args"][0])]
+        clean_updatemenus.append(clean_menu)
+
+    # Pin state merged into args[0] so every relayout call preserves layout stability
+    pin_state = {
+        "updatemenus": clean_updatemenus,
+        "margin": dict(l=120, r=200, t=110, b=150),
+        "paper_bgcolor": "#ffffff",
+        "plot_bgcolor": "#ffffff",
+        "hovermode": "closest"
+    }
+
+    if len(admissions) > 1:
+        pin_state.update({
+            "xaxis1": dict(visible=False, range=[-1, 11]),
+            "yaxis1": dict(
+                tickmode="array",
+                tickvals=[y_positions[a] for a in admissions],
+                ticktext=tick_texts,
+                range=[0.4, len(admissions) + 0.6],
+                gridcolor="rgba(0,0,0,0)",
+                zeroline=False
+            )
+        })
+    else:
+        pin_state.update({
+            "xaxis": dict(visible=False, range=[-1, 11]),
+            "yaxis": dict(
+                tickmode="array",
+                tickvals=[y_positions[a] for a in admissions],
+                ticktext=tick_texts,
+                range=[0.4, len(admissions) + 0.6],
+                gridcolor="rgba(0,0,0,0)",
+                zeroline=False
+            )
+        })
+
+    # Merge pin_state into every button's args[0] so layout is stable on every click
+    for menu in updatemenus:
+        for button in menu["buttons"]:
+            button["args"][0].update(copy.deepcopy(pin_state))
 
     # Layout enhancements
     layout_update = dict(
         title={
-            'text': f"Patient Trajectory Analytics: Subject {subject_id}",
+            'text': f"Patient Trajectory Analytics: <span style='color:#4D96FF'>Subject {subject_id}</span>",
             'y': 0.98, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top',
-            'font': {'size': 24, 'family': 'Arial, sans-serif'}
+            'font': {'size': 26, 'family': 'Segoe UI, Arial, sans-serif', 'color': '#333'}
         },
         template="plotly_white",
         height=max(800, 200 * len(admissions)),
-        margin=dict(l=100, r=600, t=100, b=140), # Adjusted margins to avoid overlap
+        margin=dict(l=120, r=200, t=110, b=150), # Increased right margin from 160
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#ffffff",
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.02,
+            y=1.03,
             xanchor="right",
             x=1,
-            bgcolor="rgba(255, 255, 255, 0.7)",
-            bordercolor="rgba(0, 0, 0, 0.1)",
-            borderwidth=1
+            bgcolor="rgba(255, 255, 255, 0.9)",
+            bordercolor="#dee2e6",
+            borderwidth=1,
+            font=dict(size=11, family="Segoe UI")
         ),
         hoverlabel=dict(
             bgcolor="white",
@@ -343,6 +431,13 @@ def build_patient_timeline_figure(patient_df: pd.DataFrame, subject_id: str) -> 
             align="left",
             bordercolor="rgba(0, 0, 0, 0.1)"
         ),
+        images=[dict(
+            source="about:blank",
+            xref="paper", yref="paper",
+            x=0, y=0, sizex=0, sizey=0,
+            opacity=0,
+            layer="below"
+        )],
         updatemenus=updatemenus,
         annotations=base_annotations
     )
@@ -357,7 +452,7 @@ def build_patient_timeline_figure(patient_df: pd.DataFrame, subject_id: str) -> 
                 tickmode="array",
                 tickvals=[y_positions[a] for a in admissions],
                 ticktext=tick_texts,
-                range=[0.5, len(admissions) + 0.8],
+                range=[0.4, len(admissions) + 0.6],
                 gridcolor="rgba(0,0,0,0)",
                 zeroline=False
             )
@@ -365,8 +460,8 @@ def build_patient_timeline_figure(patient_df: pd.DataFrame, subject_id: str) -> 
         # Update axes for analytics subplots
         fig.update_xaxes(title_text="Admission Sequence", row=2, col=1)
         fig.update_yaxes(title_text="Days Gap", row=2, col=1)
-        fig.update_xaxes(title_text="Timeline", row=2, col=2)
-        fig.update_yaxes(title_text="Admission #", row=2, col=2)
+        fig.update_xaxes(title_text="Admission", row=2, col=2)
+        fig.update_yaxes(title_text="Medication Count", row=2, col=2)
     else:
         # For single plot (go.Figure), we update the main xaxis and yaxis
         fig.update_layout(**layout_update)
@@ -377,7 +472,7 @@ def build_patient_timeline_figure(patient_df: pd.DataFrame, subject_id: str) -> 
                 tickmode="array",
                 tickvals=[y_positions[a] for a in admissions],
                 ticktext=tick_texts,
-                range=[0.5, len(admissions) + 0.8],
+                range=[0.4, len(admissions) + 0.6],
                 gridcolor="rgba(0,0,0,0)",
                 zeroline=False
             )
